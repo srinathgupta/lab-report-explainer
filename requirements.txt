@@ -1,0 +1,6 @@
+streamlit>=1.40
+google-genai>=1.50
+pydantic>=2.7
+python-dotenv>=1.0
+pandas>=2.0
+pypdf>=5.0
