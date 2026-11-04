@@ -382,3 +382,92 @@ def test_explain_note_names_bad_photo():
 ])
 def test_explain_dose_codes(text, expected):
     assert s.explain_dose_codes(text) == expected
+
+
+# --- scan and other descriptive reports -------------------------------------
+
+SCAN_PDF = (SAMPLES / "sample_mri_knee.pdf").read_bytes()
+
+SCAN_JSON = {
+    "document_kind": "written_report",
+    "report_type": "mri",
+    "body_part": "Left knee",
+    "date": "20-Oct-2026",
+    "reason_for_test": "Knee pain for 2 months.",
+    "overall_summary": "The MRI shows wear in a knee cartilage pad, a little fluid, and no tears.",
+    "main_conclusion": [
+        {"as_written": "Grade II degeneration of the medial meniscus. No meniscal tear.",
+         "plain_explanation": "The cushion in your knee shows some wear inside, but it is not torn.",
+         "status": "needs_attention"},
+        {"as_written": "Cruciate and collateral ligaments intact.",
+         "plain_explanation": "The main knee ligaments are fine.", "status": "normal"},
+    ],
+    "findings": [
+        {"as_written": "Mild joint effusion is seen.", "plain_explanation": "A little extra fluid in the knee.",
+         "status": "needs_attention"},
+        {"as_written": "No fracture.", "plain_explanation": "No broken bone.", "status": "normal"},
+    ],
+    "terms": [{"term": "Joint effusion", "meaning": "Extra fluid inside a joint."}],
+    "recommendations": [{"as_written": "Suggested clinical correlation.",
+                         "plain_explanation": "Your doctor should compare this with your symptoms.",
+                         "status": "normal"}],
+    "urgent_flags": [],
+    "questions_for_doctor": ["Do I need physiotherapy?"],
+    "notes": "",
+}
+
+
+def test_explain_scan_request():
+    client = fake_client(json.dumps(SCAN_JSON))
+    scan = s.explain_scan(SCAN_PDF, "Kannada", mode="accurate", client=client)
+    call = client.models.calls[0]
+    assert call.contents[0].inline_data.mime_type == "application/pdf"
+    assert "Kannada" in call.contents[1]
+    assert call.config.system_instruction == s.SCAN_SYSTEM_INSTRUCTION
+    assert "Never look at or interpret medical images" in call.config.system_instruction
+    assert call.config.response_schema is s.ScanSummary
+    assert call.config.thinking_config.thinking_level == "HIGH"
+    assert scan.report_type == "mri" and len(scan.findings) == 2
+
+
+def test_raw_scan_image_is_never_interpreted():
+    # Even if the model ignores its instructions and describes the image, the code throws it away.
+    data = dict(SCAN_JSON, document_kind="scan_image")
+    scan = s.explain_scan(image_bytes("PNG"), client=fake_client(json.dumps(data)))
+    assert scan.document_kind == "scan_image"
+    assert scan.findings == [] and scan.main_conclusion == [] and scan.overall_summary == ""
+    assert scan.urgent_flags == [] and scan.questions_for_doctor == []
+
+
+# --- follow-up questions ----------------------------------------------------
+
+FOLLOWUP_JSON = {"answer": "LDL is the 'bad' cholesterol.", "off_topic": False, "see_doctor_soon": False}
+
+
+def test_followup_uses_stored_result_not_the_file():
+    client = fake_client(json.dumps(FOLLOWUP_JSON))
+    history = [{"q": f"q{i}", "a": f"a{i}"} for i in range(5)]
+    ans = s.ask_followup(SUMMARY_JSON, "  What is LDL?  ", history, "Hindi", client=client)
+    assert ans.answer.startswith("LDL")
+
+    call = client.models.calls[0]
+    assert all(isinstance(c, str) for c in call.contents)  # no file re-uploaded
+    assert '"LDL Cholesterol"' in call.contents[0]
+    assert "q2" in call.contents[1] and "q4" in call.contents[1] and "q1" not in call.contents[1]  # last 3 turns
+    assert call.contents[2].startswith("QUESTION: What is LDL?") and "Hindi" in call.contents[2]
+    assert call.config.system_instruction == s.FOLLOWUP_SYSTEM_INSTRUCTION
+    assert "Never recommend, change, add or stop medicines" in call.config.system_instruction
+
+
+def test_followup_without_history():
+    client = fake_client(json.dumps(FOLLOWUP_JSON))
+    s.ask_followup(SUMMARY_JSON, "What is LDL?", client=client)
+    assert len(client.models.calls[0].contents) == 2
+
+
+@pytest.mark.parametrize("q,msg", [("   ", "type a question"), ("x" * 501, "under 500 characters")])
+def test_followup_input_checks(q, msg):
+    client = fake_client("{}")
+    with pytest.raises(s.SummarizerError, match=msg):
+        s.ask_followup(SUMMARY_JSON, q, client=client)
+    assert client.models.calls == []

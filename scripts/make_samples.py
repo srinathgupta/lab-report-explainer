@@ -1,7 +1,8 @@
-"""Generate two SYNTHETIC lab reports (fake patient, fake lab) for testing the app.
+"""Generate SYNTHETIC reports (fake patient, fake lab) for testing the app.
 
 Usage:  python scripts/make_samples.py
-Writes: sample_reports/sample_report_2026-03.pdf and sample_report_2026-09.pdf
+Writes: sample_reports/sample_report_2026-03.pdf, sample_report_2026-09.pdf (lab reports)
+        and sample_mri_knee.pdf (a written MRI report)
 """
 
 from pathlib import Path
@@ -93,8 +94,54 @@ def build(path: Path, date: str, col: int, sample_id: str) -> None:
     doc.build(story)
 
 
+MRI_FINDINGS = [
+    "Medial meniscus: Grade II intrasubstance signal in the posterior horn, not reaching the articular surface.",
+    "Lateral meniscus: Normal in signal and morphology.",
+    "Anterior cruciate ligament (ACL) and posterior cruciate ligament (PCL): Intact.",
+    "Medial and lateral collateral ligaments: Intact.",
+    "Mild joint effusion is seen.",
+    "Articular cartilage: Mild thinning over the medial femoral condyle.",
+    "No bone marrow edema. No fracture.",
+    "Patella and quadriceps / patellar tendons: Unremarkable.",
+]
+MRI_IMPRESSION = [
+    "Grade II intrasubstance degeneration of the posterior horn of the medial meniscus. No meniscal tear.",
+    "Mild joint effusion.",
+    "Early chondral thinning of the medial femoral condyle.",
+    "Cruciate and collateral ligaments intact.",
+]
+
+
+def build_mri(path: Path) -> None:
+    styles = getSampleStyleSheet()
+    doc = SimpleDocTemplate(str(path), pagesize=A4, leftMargin=18 * mm, rightMargin=18 * mm, topMargin=15 * mm)
+    story = [
+        Paragraph("<b>DEMO IMAGING CENTRE</b> (sample data, not a real centre)", styles["Title"]),
+        Paragraph("SYNTHETIC TEST REPORT FOR SOFTWARE TESTING ONLY", styles["Normal"]),
+        Spacer(1, 5 * mm),
+        Paragraph("<b>Patient:</b> Sample Patient &nbsp;&nbsp; <b>Age/Sex:</b> 42 Y / Male &nbsp;&nbsp; "
+                  "<b>Date:</b> 20-Oct-2026 &nbsp;&nbsp; <b>Ref:</b> Dr. Demo", styles["Normal"]),
+        Spacer(1, 5 * mm),
+        Paragraph("<b>MRI LEFT KNEE (PLAIN)</b>", styles["Heading2"]),
+        Paragraph("<b>Clinical history:</b> Pain in the left knee for 2 months, worse on climbing stairs.", styles["Normal"]),
+        Paragraph("<b>Technique:</b> Multiplanar, multisequence MRI of the left knee without contrast.", styles["Normal"]),
+        Spacer(1, 4 * mm),
+        Paragraph("<b>FINDINGS:</b>", styles["Normal"]),
+        *[Paragraph(f"• {f}", styles["Normal"]) for f in MRI_FINDINGS],
+        Spacer(1, 4 * mm),
+        Paragraph("<b>IMPRESSION:</b>", styles["Normal"]),
+        *[Paragraph(f"{i}. {f}", styles["Normal"]) for i, f in enumerate(MRI_IMPRESSION, 1)],
+        Spacer(1, 4 * mm),
+        Paragraph("Suggested clinical correlation.", styles["Normal"]),
+        Spacer(1, 8 * mm),
+        Paragraph("*** End of Report *** This is a synthetic document generated for testing.", styles["Italic"]),
+    ]
+    doc.build(story)
+
+
 if __name__ == "__main__":
     OUT.mkdir(exist_ok=True)
     build(OUT / "sample_report_2026-03.pdf", "12-Mar-2026", 0, "DEMO-0312")
     build(OUT / "sample_report_2026-09.pdf", "15-Sep-2026", 1, "DEMO-0915")
+    build_mri(OUT / "sample_mri_knee.pdf")
     print("Wrote", *sorted(p.name for p in OUT.glob("*.pdf")))

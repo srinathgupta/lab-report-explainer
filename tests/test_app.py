@@ -198,3 +198,95 @@ def test_sample_buttons_send_sample_reports(monkeypatch):
     assert seen == {"single": PDF, "compare": (PDF, PDF2)}
     assert "LDL cholesterol is high." in all_text(at)
     assert "Vitamin D is higher." in all_text(at)
+
+
+def test_renders_scan_report(monkeypatch):
+    from test_summarizer import SCAN_JSON
+
+    at = run(monkeypatch, scan_result={"summary": SCAN_JSON, "language": "English"})
+    assert not at.exception
+    text = all_text(at)
+    assert "MRI · Left knee · 20-Oct-2026" in text
+    assert "🟠 Needs attention · **Grade II degeneration" in text
+    assert "Do I need physiotherapy?" in text
+    assert [m.value for m in at.metric] == ["1", "1"]
+    assert any("Extra fluid inside a joint." in str(df.value.values) for df in at.dataframe)
+    assert at.text_input(key="scan_result_question")  # follow-up box shown
+
+
+def test_scan_image_gets_refusal_and_no_followup(monkeypatch):
+    from test_summarizer import SCAN_JSON
+
+    import summarizer as s
+
+    scan = s.apply_scan_safety(s.ScanSummary.model_validate(dict(SCAN_JSON, document_kind="scan_image")))
+    at = run(monkeypatch, scan_result={"summary": scan.model_dump(), "language": "English"})
+    assert any("scan image itself" in w.value for w in at.warning)
+    assert "Grade II" not in all_text(at)
+    assert not any(t.key == "scan_result_question" for t in at.text_input)
+
+
+def test_scan_sample_button(monkeypatch):
+    import streamlit as st
+
+    import summarizer
+    from test_summarizer import SCAN_JSON, SCAN_PDF
+
+    st.cache_resource.clear()
+    seen = {}
+
+    def fake_scan(data, language, mode):
+        seen["data"] = data
+        return summarizer.ScanSummary.model_validate(SCAN_JSON)
+
+    monkeypatch.setattr(summarizer, "explain_scan", fake_scan)
+    at = run(monkeypatch)
+    at.button(key="scan_sample").click().run()
+    assert not at.exception
+    assert seen["data"] == SCAN_PDF
+    assert "Grade II degeneration" in all_text(at)
+
+
+def ask_button(at):
+    return next(b for b in at.button if b.label == "Ask")
+
+
+def test_followup_flow(monkeypatch):
+    import streamlit as st
+
+    import summarizer
+
+    st.cache_resource.clear()
+    calls = []
+
+    def fake_followup(context, question, history, language):
+        calls.append((question, len(history), language))
+        urgent = "chest pain" in question
+        return summarizer.FollowUpAnswer(answer=f"Answer to: {question}", off_topic=False, see_doctor_soon=urgent)
+
+    monkeypatch.setattr(summarizer, "ask_followup", fake_followup)
+    at = run(monkeypatch, single_result={"summary": SUMMARY_JSON, "language": "English"})
+    at.text_input(key="single_result_question").input("What is LDL?")
+    ask_button(at).click().run()
+    at.text_input(key="single_result_question").input("I have chest pain")
+    ask_button(at).click().run()
+    assert not at.exception
+    assert calls == [("What is LDL?", 0, "English"), ("I have chest pain", 1, "English")]
+    assert len(at.chat_message) == 4
+    assert "Answer to: What is LDL?" in all_text(at)
+    assert sum("prompt medical attention" in e.value for e in at.error) == 1
+    assert "3 question(s) left" in all_text(at)
+
+
+def test_followup_limit(monkeypatch):
+    history = [{"q": f"q{i}", "a": f"a{i}", "see_doctor": False} for i in range(5)]
+    at = run(monkeypatch, single_result={"summary": SUMMARY_JSON, "language": "English", "followups": history})
+    assert not at.exception
+    assert "You've asked 5 questions" in all_text(at)
+    assert not any(t.key == "single_result_question" for t in at.text_input)
+
+
+def test_no_followup_for_non_lab_report(monkeypatch):
+    data = dict(SUMMARY_JSON, is_lab_report=False)
+    at = run(monkeypatch, single_result={"summary": data, "language": "English"})
+    assert not any(t.key == "single_result_question" for t in at.text_input)

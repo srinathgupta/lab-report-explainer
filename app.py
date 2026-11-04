@@ -20,14 +20,19 @@ from dotenv import load_dotenv
 from summarizer import (
     DEFAULT_MODEL,
     LANGUAGES,
+    MAX_FOLLOWUPS,
     MAX_NOTE_FILES,
+    MAX_QUESTION_CHARS,
     UPLOAD_TYPES,
     ComparisonSummary,
     NoteSummary,
     ReportSummary,
+    ScanSummary,
     SummarizerError,
+    ask_followup,
     compare_reports,
     explain_note,
+    explain_scan,
     get_api_key,
     summarize_report,
 )
@@ -84,6 +89,7 @@ CHANGE_LABELS = {
 SAMPLES_DIR = Path(__file__).resolve().parent / "sample_reports"
 SAMPLE_EARLIER = SAMPLES_DIR / "sample_report_2026-03.pdf"
 SAMPLE_LATER = SAMPLES_DIR / "sample_report_2026-09.pdf"
+SAMPLE_SCAN = SAMPLES_DIR / "sample_mri_knee.pdf"
 DEMO_BANNER = (
     "**Demo app.** Please don't upload real medical reports or prescriptions. Use the sample buttons "
     "or a made-up document. Files are processed by Google Gemini's free tier, which may use them to improve "
@@ -96,7 +102,7 @@ def demo_mode() -> bool:
 
 
 DISCLAIMER = (
-    "This tool explains lab results in simple words. It is **not medical advice** and can make mistakes. "
+    "This tool explains medical reports in simple words. It is **not medical advice** and can make mistakes. "
     "Always discuss your results with a doctor before making any health decision."
 )
 
@@ -362,6 +368,135 @@ def render_note(note: NoteSummary, codes: dict) -> None:
     st.info(NOTE_WARNING, icon="💊")
 
 
+SCAN_LABELS = {
+    "xray": "X-ray",
+    "ct": "CT scan",
+    "mri": "MRI",
+    "ultrasound": "Ultrasound",
+    "ecg": "ECG",
+    "echo": "Echocardiogram",
+    "pathology": "Pathology / biopsy",
+    "other": "Report",
+}
+FINDING_LABELS = {"normal": "🟢 Normal", "needs_attention": "🟠 Needs attention", "unclear": "⚪ Unclear"}
+SCAN_WARNING = (
+    "This explains the **written report** from your radiologist or lab. It does not look at the scan images "
+    "themselves and is not a diagnosis. Discuss the report with the doctor who ordered the test."
+)
+SCAN_IMAGE_MESSAGE = (
+    "This looks like the scan image itself, not the written report. This app only explains the written report: "
+    "reading X-ray, CT or MRI images needs a trained radiologist. Please upload the report that came with your scan."
+)
+
+
+def render_findings(title: str, items, show_status: bool = True) -> None:
+    if not items:
+        return
+    st.subheader(title)
+    for f in sorted(items, key=lambda f: f.status != "needs_attention") if show_status else items:
+        badge = f"{FINDING_LABELS[f.status]} · " if show_status else "📌 "
+        st.markdown(f"{badge}**{f.as_written}**  \n{f.plain_explanation}")
+
+
+def render_scan(scan: ScanSummary) -> None:
+    if scan.document_kind == "scan_image":
+        st.warning(SCAN_IMAGE_MESSAGE, icon="🩻")
+        return
+    if scan.document_kind == "other":
+        st.warning("This doesn't look like a scan or test report. Please upload the written report.")
+        return
+
+    st.caption(" · ".join(x for x in [SCAN_LABELS[scan.report_type], scan.body_part, scan.date] if x))
+    for flag in scan.urgent_flags:
+        st.error(f"**Contact your doctor soon:** {flag}", icon="🚨")
+    if scan.reason_for_test:
+        st.markdown(f"**Why the test was done:** {scan.reason_for_test}")
+
+    st.subheader("Summary")
+    st.write(scan.overall_summary)
+
+    all_findings = scan.findings
+    if all_findings:
+        c1, c2 = st.columns(2)
+        c1.metric("Normal findings", sum(f.status == "normal" for f in all_findings))
+        c2.metric("Need attention", sum(f.status == "needs_attention" for f in all_findings))
+
+    render_findings("Main conclusion", scan.main_conclusion)
+    render_findings("All findings", scan.findings)
+
+    if scan.terms:
+        st.subheader("Medical words explained")
+        st.dataframe(
+            pd.DataFrame([{"Word": x.term, "Meaning": x.meaning} for x in scan.terms]), hide_index=True
+        )
+
+    render_findings("What the report recommends", scan.recommendations, show_status=False)
+
+    if scan.questions_for_doctor:
+        st.subheader("Questions to ask your doctor")
+        st.markdown("\n".join(f"{i}. {q}" for i, q in enumerate(scan.questions_for_doctor, 1)))
+    if scan.notes:
+        st.info(scan.notes, icon="📝")
+    st.info(SCAN_WARNING, icon="🩻")
+
+
+FOLLOWUP_PLACEHOLDERS = {
+    "single_result": "e.g. What can help bring my LDL cholesterol down?",
+    "compare_result": "e.g. Why might my vitamin D have improved?",
+    "scan_result": "e.g. What does 'joint effusion' mean?",
+    "note_result": "e.g. What is a CBC test?",
+}
+EMERGENCY_MESSAGE = (
+    "What you describe may need prompt medical attention. Please contact a doctor now, "
+    "or go to the nearest hospital."
+)
+
+
+def render_followup(result_key: str, language: str, has_key: bool) -> None:
+    """Chat-style follow-up questions grounded in the stored explanation."""
+    result = st.session_state.get(result_key)
+    if not result:
+        return
+    history = result.setdefault("followups", [])
+    st.divider()
+    st.subheader("💬 Ask a follow-up question")
+    for item in history:
+        with st.chat_message("user"):
+            st.write(item["q"])
+        with st.chat_message("assistant"):
+            if item.get("see_doctor"):
+                st.error(EMERGENCY_MESSAGE, icon="🚑")
+            st.markdown(item["a"])
+
+    remaining = MAX_FOLLOWUPS - len(history)
+    if remaining <= 0:
+        st.caption(f"You've asked {MAX_FOLLOWUPS} questions about this result. Please discuss anything else with your doctor.")
+        return
+    with st.form(f"{result_key}_followup", clear_on_submit=True):
+        question = st.text_input(
+            "Your question",
+            max_chars=MAX_QUESTION_CHARS,
+            placeholder=FOLLOWUP_PLACEHOLDERS.get(result_key, ""),
+            key=f"{result_key}_question",
+        )
+        asked = st.form_submit_button("Ask", disabled=not has_key)
+    st.caption(
+        f"Answers use this result and general health information. Not medical advice. {remaining} question(s) left."
+    )
+    if asked and question.strip():
+        limit_msg = try_use_quota()
+        if limit_msg:
+            st.warning(limit_msg)
+            return
+        try:
+            with st.spinner("Thinking…"):
+                answer = ask_followup(result["summary"], question, history, language)
+            history.append({"q": question.strip(), "a": answer.answer, "see_doctor": answer.see_doctor_soon})
+            st.rerun()
+        except SummarizerError as e:
+            st.error(str(e))
+
+
 def stale_language_note(result: dict, language: str) -> None:
     if result["language"] != language:
         st.caption(f"Showing results in {result['language']}. Click the button again to get them in {language}.")
@@ -391,15 +526,15 @@ def main() -> None:
         st.divider()
         st.markdown(
             "**How it works**\n\n"
-            "1. Upload a lab report, or a photo of a prescription\n"
-            "2. Gemini reads it, including scans and handwriting\n"
-            "3. You get a plain-language explanation\n\n"
+            "1. Upload a lab report, scan report (X-ray, CT, MRI…) or a photo of a prescription\n"
+            "2. Gemini reads it, including scanned pages and handwriting\n"
+            "3. You get a plain-language explanation, and can ask follow-up questions\n\n"
             "**Privacy:** files are sent to the Gemini API for processing and are not saved by this app."
         )
         st.caption(f"Model: {os.environ.get('GEMINI_MODEL', DEFAULT_MODEL)}")
 
     st.title("🧪 Lab Report Explainer")
-    st.write("Upload a blood test or lab report and get it explained in plain language.")
+    st.write("Upload a lab report, a scan report or a prescription and get it explained in plain language.")
     st.info(DISCLAIMER, icon="ℹ️")
     if demo_mode():
         st.warning(DEMO_BANNER, icon="🧪")
@@ -408,8 +543,8 @@ def main() -> None:
     if not has_key:
         st.error("No Gemini API key configured. Add `GEMINI_API_KEY=...` to a `.env` file and restart the app.")
 
-    tab_single, tab_compare, tab_note = st.tabs(
-        ["📄 Explain a report", "📈 Compare two reports", "💊 Prescription / doctor's note"]
+    tab_single, tab_compare, tab_scan, tab_note = st.tabs(
+        ["📄 Lab report", "📈 Compare reports", "🩻 Scans & other reports", "💊 Prescription"]
     )
 
     with tab_single:
@@ -443,6 +578,8 @@ def main() -> None:
         if result:
             stale_language_note(result, language)
             render_summary(ReportSummary.model_validate(result["summary"]), result.get("corrected"))
+            if result["summary"]["is_lab_report"]:
+                render_followup("single_result", language, has_key)
 
     with tab_compare:
         st.write("See how your results changed between two reports.")
@@ -481,6 +618,42 @@ def main() -> None:
         if result:
             stale_language_note(result, language)
             render_comparison(ComparisonSummary.model_validate(result["summary"]))
+            if result["summary"]["both_lab_reports"]:
+                render_followup("compare_result", language, has_key)
+
+    with tab_scan:
+        st.write(
+            "Upload the written report from an X-ray, CT, MRI, ultrasound, ECG, echo or biopsy "
+            "and get it explained in plain words."
+        )
+        st.caption(SCAN_WARNING)
+        scan_file = st.file_uploader(
+            "Scan or test report (PDF or photo)", type=UPLOAD_TYPES, key="scan_file", on_change=clear("scan_result")
+        )
+        b1, b2 = st.columns(2)
+        explain = b1.button("Explain this report", type="primary", disabled=not (scan_file and has_key), key="scan_btn")
+        sample = b2.button(
+            "Try a sample MRI report", disabled=not has_key, key="scan_sample", help="A made-up knee MRI report"
+        )
+        data = scan_file.getvalue() if explain else SAMPLE_SCAN.read_bytes() if sample else None
+        if data:
+            limit_msg = try_use_quota()
+            if limit_msg:
+                st.warning(limit_msg)
+            else:
+                try:
+                    with st.spinner("Reading the report… this can take 20–60 seconds."):
+                        scan = explain_scan(data, language, mode)
+                    st.session_state["scan_result"] = {"summary": scan.model_dump(), "language": language}
+                except SummarizerError as e:
+                    st.error(str(e))
+
+        result = st.session_state.get("scan_result")
+        if result:
+            stale_language_note(result, language)
+            render_scan(ScanSummary.model_validate(result["summary"]))
+            if result["summary"]["document_kind"] == "written_report":
+                render_followup("scan_result", language, has_key)
 
     with tab_note:
         st.write("Take a clear photo of a prescription or doctor's note and get it explained in plain words.")
@@ -516,6 +689,8 @@ def main() -> None:
         if result:
             stale_language_note(result, language)
             render_note(NoteSummary.model_validate(result["summary"]), result["codes"])
+            if result["summary"]["is_medical_note"]:
+                render_followup("note_result", language, has_key)
 
 
 main()
