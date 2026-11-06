@@ -247,8 +247,8 @@ def test_scan_sample_button(monkeypatch):
     assert "Grade II degeneration" in all_text(at)
 
 
-def ask_button(at):
-    return next(b for b in at.button if b.label == "Ask")
+def ask_button(at, prefix="single"):
+    return next(b for b in at.button if b.label == "Ask" and b.form_id.startswith(prefix))
 
 
 def test_followup_flow(monkeypatch):
@@ -290,3 +290,73 @@ def test_no_followup_for_non_lab_report(monkeypatch):
     data = dict(SUMMARY_JSON, is_lab_report=False)
     at = run(monkeypatch, single_result={"summary": data, "language": "English"})
     assert not any(t.key == "single_result_question" for t in at.text_input)
+
+
+def test_renders_oncology_report(monkeypatch):
+    from test_summarizer import ONCO_JSON
+
+    import summarizer as s
+
+    onco, removed, corrected = s.apply_oncology_safety(s.OncologySummary.model_validate(ONCO_JSON))
+    at = run(monkeypatch, onco_result={"summary": onco.model_dump(), "removed": removed, "corrected": corrected,
+                                       "language": "English"})
+    assert not at.exception
+    text = all_text(at)
+    assert "Diagnosis as written:** Invasive ductal carcinoma (NST)" in text
+    assert "This means intermediate grade" in text
+    assert "- `pN1a`: cancer was found in nearby lymph nodes" in text  # from the fixed glossary
+    assert "📖 Estrogen receptor: whether the cancer cells use the hormone estrogen" in text
+    assert "removed on purpose" in text
+    assert "corrected for: CA 15-3" in text
+    assert "5-year survival rate" not in text
+    assert any("don't have to go through this alone" in i.value for i in at.info)
+    assert at.text_input(key="onco_result_question")
+
+
+def test_oncology_non_cancer_and_scan_image(monkeypatch):
+    from test_summarizer import ONCO_JSON
+
+    for kind, msg in [("not_cancer_related", "doesn't look like a cancer"), ("scan_image", "scan picture")]:
+        at = run(monkeypatch, onco_result={"summary": dict(ONCO_JSON, document_kind=kind), "language": "English"})
+        assert any(msg in w.value for w in at.warning)
+        assert not any(t.key == "onco_result_question" for t in at.text_input)
+
+
+def test_oncology_sample_button_uses_careful_mode(monkeypatch):
+    import streamlit as st
+
+    import summarizer
+    from test_summarizer import ONCO_JSON, ONCO_PDF
+
+    st.cache_resource.clear()
+    seen = {}
+
+    def fake_onco(data, language, mode):
+        seen.update(data=data, mode=mode)
+        return summarizer.OncologySummary.model_validate(ONCO_JSON), 0, []
+
+    monkeypatch.setattr(summarizer, "explain_oncology", fake_onco)
+    at = run(monkeypatch)
+    at.button(key="onco_sample").click().run()
+    assert not at.exception
+    assert seen == {"data": ONCO_PDF, "mode": "accurate"}
+
+
+def test_oncology_followup_passes_no_prognosis(monkeypatch):
+    import streamlit as st
+
+    import summarizer
+    from test_summarizer import ONCO_JSON
+
+    st.cache_resource.clear()
+    seen = {}
+
+    def fake_followup(context, question, history, language, **kwargs):
+        seen.update(kwargs)
+        return summarizer.FollowUpAnswer(answer="ok", off_topic=False, see_doctor_soon=False)
+
+    monkeypatch.setattr(summarizer, "ask_followup", fake_followup)
+    at = run(monkeypatch, onco_result={"summary": ONCO_JSON, "language": "English"})
+    at.text_input(key="onco_result_question").input("What is HER2?")
+    ask_button(at, "onco").click().run()
+    assert seen == {"no_prognosis": True}

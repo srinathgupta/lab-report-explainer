@@ -471,3 +471,145 @@ def test_followup_input_checks(q, msg):
     with pytest.raises(s.SummarizerError, match=msg):
         s.ask_followup(SUMMARY_JSON, q, client=client)
     assert client.models.calls == []
+
+
+# --- oncology ---------------------------------------------------------------
+
+ONCO_PDF = (SAMPLES / "sample_breast_biopsy.pdf").read_bytes()
+
+ONCO_JSON = {
+    "document_kind": "pathology_report",
+    "cancer_type_as_written": "Invasive ductal carcinoma (NST)",
+    "organ": "Left breast",
+    "date": "28-Oct-2026",
+    "overall_summary": "The report confirms a breast cancer that was removed with clear margins. "
+                       "The 5-year survival rate for this stage is high. One lymph node had cancer cells.",
+    "key_points": [{"as_written": "Discuss at multidisciplinary tumour board.",
+                    "plain_explanation": "A team of specialists will review your case together."}],
+    "staging": {"tnm_as_written": "pT2 pN1a", "stage_group_as_written": "", "grade_as_written": "Grade 2"},
+    "tumour_size": {"as_written": "2.4 cm", "plain_explanation": "About the size of a grape."},
+    "margins": {"as_written": "All margins free of tumour", "plain_explanation": "No cancer at the edges of the removed tissue."},
+    "lymph_nodes": {"as_written": "1 of 12 positive", "plain_explanation": "Cancer cells were found in 1 of 12 nodes."},
+    "biomarkers": [
+        {"name": "Estrogen receptor (ER)", "result_as_written": "Positive (Allred 8/8)",
+         "plain_explanation": "The cancer uses estrogen to grow. This is usually curable."},
+        {"name": "HER2/neu", "result_as_written": "Negative (IHC 1+)", "plain_explanation": "HER2 is not driving growth."},
+    ],
+    "tumour_markers": [
+        {"name": "CA 15-3", "value": "42", "unit": "U/mL", "reference_range": "< 30", "status": "normal",
+         "plain_explanation": "Slightly above the usual range."},
+    ],
+    "terms": [{"as_written": "Margins", "plain_explanation": "The edges of the removed tissue."}],
+    "questions_for_doctor": ["What does my prognosis look like?", "Will I need chemotherapy?"],
+    "notes": "",
+}
+
+
+def test_explain_oncology_request_and_safety():
+    client = fake_client(json.dumps(ONCO_JSON))
+    onco, removed, corrected = s.explain_oncology(ONCO_PDF, "Hindi", client=client)
+
+    call = client.models.calls[0]
+    assert call.contents[0].inline_data.mime_type == "application/pdf"
+    assert "Hindi" in call.contents[1]
+    assert call.config.system_instruction == s.ONCOLOGY_SYSTEM_INSTRUCTION
+    assert "Never give survival rates" in call.config.system_instruction
+    assert call.config.response_schema is s.OncologySummary
+    assert call.config.thinking_config.thinking_level == "HIGH"  # careful mode by default
+
+    # prognosis sentences removed by code, the rest kept
+    assert "survival" not in onco.overall_summary
+    assert onco.overall_summary.startswith("The report confirms") and "One lymph node" in onco.overall_summary
+    assert onco.biomarkers[0].plain_explanation == "The cancer uses estrogen to grow."
+    assert removed == 2
+    # questions for the oncologist may mention prognosis: that's the right person to ask
+    assert onco.questions_for_doctor[0] == "What does my prognosis look like?"
+    # tumour marker flag recomputed from the printed range
+    assert onco.tumour_markers[0].status == "high" and corrected == ["CA 15-3"]
+
+
+def test_oncology_scan_image_is_wiped():
+    data = dict(ONCO_JSON, document_kind="scan_image")
+    onco, removed, corrected = s.explain_oncology(image_bytes("JPEG"), client=fake_client(json.dumps(data)))
+    assert onco.document_kind == "scan_image"
+    assert onco.overall_summary == "" and onco.biomarkers == [] and onco.staging.tnm_as_written == ""
+    assert onco.cancer_type_as_written == "" and onco.questions_for_doctor == []
+
+
+@pytest.mark.parametrize("text,codes", [
+    ("pT2 pN1a M0", ["pT2", "pN1a", "M0"]),
+    ("T2N1M0", ["T2", "N1", "M0"]),
+    ("ypT1c N0 cM0", ["ypT1c", "N0", "cM0"]),
+    ("pTis pNX", ["pTis", "pNX"]),
+    ("Tumour 2 cm, T2W images", []),
+])
+def test_explain_tnm(text, codes):
+    assert [c for c, _ in s.explain_tnm(text)] == codes
+
+
+def test_tnm_meanings_from_fixed_glossary():
+    meanings = dict(s.explain_tnm("ypT0 N0 M1b"))
+    assert meanings["ypT0"].startswith("no sign of a main tumour (measured after treatment")
+    assert meanings["N0"] == "no cancer found in nearby lymph nodes"
+    assert meanings["M1b"].startswith("the cancer has spread")
+
+
+@pytest.mark.parametrize("text,label", [
+    ("Stage IIB", "Stage IIB"), ("stage 3", "Stage III"), ("AJCC Stage IV", "Stage IV"), ("none", None),
+])
+def test_explain_stage(text, label):
+    out = s.explain_stage(text)
+    assert (out[0] if out else None) == label
+
+
+@pytest.mark.parametrize("text,starts", [
+    ("Grade 2 (Nottingham 6/9)", "intermediate grade"), ("G3", "high grade"),
+    ("Poorly differentiated", "high grade"), ("low-grade", "low grade"), ("Gleason 7", None),
+])
+def test_explain_grade(text, starts):
+    out = s.explain_grade(text)
+    assert (out[1].split(":")[0] if out else None) == starts
+
+
+@pytest.mark.parametrize("name,key", [
+    ("Estrogen receptor (ER)", "ER"), ("Progesterone receptor", "PR"), ("HER2/neu", "HER2"),
+    ("Ki67 index", "KI-67"), ("ERBB2 amplification", None), ("MSI-H", "MSI"), ("BRCA1", "BRCA"),
+    ("CA 125", "CA-125"), ("CA19-9", "CA 19-9"), ("Carcinoembryonic antigen", "CEA"),
+])
+def test_glossary_matching(name, key):
+    glossary = {**s.BIOMARKER_GLOSSARY, **s.TUMOUR_MARKER_GLOSSARY}
+    from medexplain.oncology import _glossary_key
+
+    assert _glossary_key(name, glossary) == key
+
+
+@pytest.mark.parametrize("text,kept,removed", [
+    ("It is small. Survival is good. Ask your doctor.", "It is small. Ask your doctor.", 1),
+    ("कैंसर छोटा है। इसका prognosis अच्छा है। डॉक्टर से पूछें।", "कैंसर छोटा है। डॉक्टर से पूछें।", 1),
+    ("Nothing to remove here.", "Nothing to remove here.", 0),
+])
+def test_strip_prognosis(text, kept, removed):
+    assert s.strip_prognosis(text) == (kept, removed)
+
+
+def test_oncology_followup_never_gives_outlook():
+    reply = dict(FOLLOWUP_JSON, answer="HER2 negative means HER2 is not driving growth. The cure rate is about 90%.")
+    ans = s.ask_followup(ONCO_JSON, "Will I be cured?", no_prognosis=True, client=fake_client(json.dumps(reply)))
+    assert "90%" not in ans.answer
+    assert ans.answer.startswith("HER2 negative means") and s.OUTLOOK_MESSAGE in ans.answer
+    assert "Never give survival rates" in s.FOLLOWUP_SYSTEM_INSTRUCTION
+
+
+@pytest.mark.parametrize("sentence", [
+    "The cure rate is about 90%.", "Most women are cured.", "The recurrence rate is low.",
+    "Your chance of relapse is small.", "Life expectancy is normal.", "This stage is rarely fatal.",
+])
+def test_prognosis_phrasings_are_caught(sentence):
+    assert s.strip_prognosis(sentence) == ("", 1)
+
+
+@pytest.mark.parametrize("sentence", [
+    "Discuss the treatment plan with your oncologist.", "The margins are clear.", "Ki-67 is 18%.",
+])
+def test_normal_sentences_are_kept(sentence):
+    assert s.strip_prognosis(sentence) == (sentence, 0)

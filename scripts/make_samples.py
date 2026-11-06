@@ -2,7 +2,7 @@
 
 Usage:  python scripts/make_samples.py
 Writes: sample_reports/sample_report_2026-03.pdf, sample_report_2026-09.pdf (lab reports)
-        and sample_mri_knee.pdf (a written MRI report)
+        sample_mri_knee.pdf (a written MRI report) and sample_breast_biopsy.pdf (a pathology report)
 """
 
 from pathlib import Path
@@ -139,9 +139,70 @@ def build_mri(path: Path) -> None:
     doc.build(story)
 
 
+def build_biopsy(path: Path) -> None:
+    styles = getSampleStyleSheet()
+    doc = SimpleDocTemplate(str(path), pagesize=A4, leftMargin=18 * mm, rightMargin=18 * mm, topMargin=15 * mm)
+    rows = [
+        ["Histological type", "Invasive ductal carcinoma, no special type (NST)"],
+        ["Histological grade", "Grade 2 (Nottingham score 6/9: tubules 3, nuclei 2, mitoses 1)"],
+        ["Tumour size", "2.4 cm in greatest dimension"],
+        ["Margins", "All margins free of tumour; closest margin (superior) 3 mm"],
+        ["Lymphovascular invasion", "Not identified"],
+        ["Lymph nodes", "1 of 12 axillary lymph nodes shows metastatic carcinoma (1/12), size 4 mm"],
+        ["Pathological stage (AJCC 8th ed.)", "pT2 pN1a"],
+    ]
+    ihc = [
+        ["Estrogen receptor (ER)", "Positive, 90% of tumour cells, strong intensity (Allred score 8/8)"],
+        ["Progesterone receptor (PR)", "Positive, 40% of tumour cells, moderate intensity (Allred score 6/8)"],
+        ["HER2/neu", "Negative (IHC score 1+)"],
+        ["Ki-67", "18%"],
+    ]
+    table_style = TableStyle([
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+    ])
+    def table(data):
+        t = Table([[Paragraph(a, styles["Normal"]), Paragraph(b, styles["Normal"])] for a, b in data],
+                  colWidths=[55 * mm, 115 * mm])
+        t.setStyle(table_style)
+        return t
+    story = [
+        Paragraph("<b>DEMO PATHOLOGY LABORATORY</b> (sample data, not a real lab)", styles["Title"]),
+        Paragraph("SYNTHETIC TEST REPORT FOR SOFTWARE TESTING ONLY", styles["Normal"]),
+        Spacer(1, 5 * mm),
+        Paragraph("<b>Patient:</b> Sample Patient &nbsp;&nbsp; <b>Age/Sex:</b> 48 Y / Female &nbsp;&nbsp; "
+                  "<b>Received:</b> 28-Oct-2026 &nbsp;&nbsp; <b>Ref:</b> Dr. Demo", styles["Normal"]),
+        Spacer(1, 4 * mm),
+        Paragraph("<b>HISTOPATHOLOGY REPORT</b>", styles["Heading2"]),
+        Paragraph("<b>Specimen:</b> Left breast, wide local excision with axillary lymph node dissection.", styles["Normal"]),
+        Paragraph("<b>Clinical details:</b> Lump in left breast, upper outer quadrant.", styles["Normal"]),
+        Spacer(1, 3 * mm),
+        Paragraph("<b>Gross:</b> Received a fibro-fatty breast specimen measuring 7 x 5 x 4 cm with a firm grey-white "
+                  "tumour measuring 2.4 x 2.0 x 1.8 cm. Twelve lymph nodes identified.", styles["Normal"]),
+        Spacer(1, 3 * mm),
+        Paragraph("<b>MICROSCOPY AND SYNOPTIC SUMMARY</b>", styles["Normal"]),
+        table(rows),
+        Spacer(1, 4 * mm),
+        Paragraph("<b>IMMUNOHISTOCHEMISTRY</b>", styles["Normal"]),
+        table(ihc),
+        Spacer(1, 4 * mm),
+        Paragraph("<b>FINAL DIAGNOSIS:</b> Left breast, wide local excision: Invasive ductal carcinoma (NST), "
+                  "Grade 2, measuring 2.4 cm. Margins free. Metastatic carcinoma in 1 of 12 axillary lymph nodes. "
+                  "pT2 pN1a. ER positive, PR positive, HER2 negative (1+). Ki-67 18%.", styles["Normal"]),
+        Spacer(1, 3 * mm),
+        Paragraph("Please correlate clinically. Discuss at multidisciplinary tumour board.", styles["Normal"]),
+        Spacer(1, 8 * mm),
+        Paragraph("*** End of Report *** This is a synthetic document generated for testing.", styles["Italic"]),
+    ]
+    doc.build(story)
+
+
 if __name__ == "__main__":
     OUT.mkdir(exist_ok=True)
     build(OUT / "sample_report_2026-03.pdf", "12-Mar-2026", 0, "DEMO-0312")
     build(OUT / "sample_report_2026-09.pdf", "15-Sep-2026", 1, "DEMO-0915")
     build_mri(OUT / "sample_mri_knee.pdf")
+    build_biopsy(OUT / "sample_breast_biopsy.pdf")
     print("Wrote", *sorted(p.name for p in OUT.glob("*.pdf")))

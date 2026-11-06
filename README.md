@@ -1,6 +1,6 @@
 # 🧪 Lab Report Explainer
 
-Upload a lab report, a scan report (X-ray, CT, MRI, ultrasound) or a photo of a handwritten prescription, and get a plain-language explanation from Google Gemini, in English, Hindi, Kannada or 12 other languages. Then ask follow-up questions about it.
+Upload a lab report, a scan report (X-ray, CT, MRI, ultrasound), a cancer biopsy report or a photo of a handwritten prescription, and get a plain-language explanation from Google Gemini, in English, Hindi, Kannada or 12 other languages. Then ask follow-up questions about it.
 
 **Live demo:** _add your Streamlit app link here_. Click **Try a sample report** to see it work without uploading anything.
 
@@ -11,6 +11,7 @@ Upload a lab report, a scan report (X-ray, CT, MRI, ultrasound) or a photo of a 
 - **Lab reports**: overall summary, key findings, every test with a 🟢/🔴/🔵 status, a plain-language note per test, and questions to ask your doctor
 - **Compare two reports**: side-by-side values, what improved, what needs attention
 - **Scans & other reports**: written X-ray, CT, MRI, ultrasound, ECG, echo and biopsy reports explained: main conclusion, each finding marked normal or needs attention, medical words explained, and what the report recommends
+- **Cancer reports**: biopsy / pathology reports and tumour-marker tests explained calmly: diagnosis as written, stage, TNM and grade, margins, lymph nodes, receptor results (ER, PR, HER2, Ki-67…) and tumour markers (CEA, CA-125, PSA…), with questions for the oncologist
 - **Prescriptions & doctor's notes**: photograph a handwritten note (up to 5 pages); medicines, doses, tests and advice explained, with a confidence rating per item
 - **Follow-up questions**: ask up to 5 questions about any result ("what does joint effusion mean?"). Answers are based on the stored explanation, so the file isn't uploaded again
 - **15 languages**: explanations in the chosen language's script; test names and values stay exactly as printed
@@ -20,6 +21,7 @@ Upload a lab report, a scan report (X-ray, CT, MRI, ultrasound) or a photo of a 
 
 - **Code checks the AI**: Python re-checks every high/low/normal flag against the printed reference range and corrects the AI if it got one wrong
 - **Prescription safety**: always uses Accurate mode; unclear medicine names are never guessed (the code removes any interpretation the AI marks as unclear); dose shorthand like `1-0-1`, `BD`, `TDS`, `PC` is explained from a fixed table, not by the AI
+- **Cancer report safety**: stage, TNM, grade, receptor and tumour-marker meanings come from fixed glossaries in code, not the AI; tumour-marker flags are recomputed from the printed range; any sentence about survival, cure chances or life expectancy is removed by code (also in follow-up answers), because outlook is a conversation for the oncologist
 - **Scan safety**: only the written report is explained. If someone uploads the scan picture itself, the app refuses and the code discards anything the AI said about it
 - **Follow-up safety**: no diagnoses, no medicine advice, off-topic questions declined, and possible emergencies (e.g. chest pain) get a clear "seek help now" message
 - **Prompt-injection resistant**: documents and questions are treated as data; instructions hidden inside them are ignored
@@ -51,18 +53,26 @@ Open http://localhost:8501 and click a **Try a sample…** button, or upload you
 ## Project layout
 
 ```
-app.py                   Streamlit UI (tabs, tables, follow-up chat, usage limits)
-summarizer.py            Gemini calls, JSON schemas, prompts, safety checks, error handling
+app.py                   Streamlit entry point: sidebar, tabs
+views/                   One screen per tab (lab, scan, oncology, prescription) + shared helpers
+medexplain/              The logic, one module per feature:
+  core.py                  settings, file checks, Gemini call with retries and fallback
+  lab.py                   lab reports, comparison, flag double-check
+  scan.py                  written scan / test reports
+  oncology.py              cancer reports, fixed TNM/grade/marker glossaries, prognosis filter
+  prescription.py          prescriptions, dose-code table
+  followup.py              follow-up questions
+summarizer.py            Public entry point that re-exports the medexplain package
 scripts/make_samples.py  Regenerates the synthetic sample PDFs (needs reportlab)
-sample_reports/          Two fake lab reports (March and September) and a fake knee MRI report
-tests/                   pytest suite, 83 tests (Gemini is mocked, no key needed)
+sample_reports/          Fake lab reports, knee MRI report and breast biopsy report
+tests/                   pytest suite, 127 tests (Gemini is mocked, no key needed)
 ```
 
 ## How it works
 
 1. The file is validated (real PDF or photo by its first bytes, size, page count, not password-protected).
-2. It goes to Gemini with a task-specific system prompt (rules) and a `response_schema`, which forces Gemini to return JSON matching the Pydantic models in `summarizer.py` (`ReportSummary`, `ComparisonSummary`, `ScanSummary`, `NoteSummary`).
-3. The JSON is validated, then checked by plain code (range checks, dose-code table, unclear-item and scan-image removal).
+2. It goes to Gemini with a task-specific system prompt (rules) and a `response_schema`, which forces Gemini to return JSON matching the Pydantic models in `summarizer.py` (`ReportSummary`, `ComparisonSummary`, `ScanSummary`, `OncologySummary`, `NoteSummary`).
+3. The JSON is validated, then checked by plain code (range checks, dose-code and TNM/grade glossaries, prognosis filter, unclear-item and scan-image removal).
 4. Streamlit renders the result; follow-up questions send the stored JSON, not the file.
 
 ## Configuration
@@ -103,6 +113,7 @@ pytest
 
 ## Ideas for next steps
 
+- Side-effect tracker for people in cancer treatment, with rule-based warning signs and a summary for the oncologist
 - An accuracy evaluation on a labelled dataset (e.g. handwritten medicine names) with a published score
 - Download the summary as a PDF
 - Charts of values over time across 3+ reports
