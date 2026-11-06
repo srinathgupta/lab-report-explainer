@@ -2,7 +2,7 @@
 
 Upload a lab report, a scan report (X-ray, CT, MRI, ultrasound), a cancer biopsy report or a photo of a handwritten prescription, and get a plain-language explanation from Google Gemini, in English, Hindi, Kannada or 12 other languages. Then ask follow-up questions about it.
 
-   **Live demo:** https://lab-report-explainer.streamlit.app/ · Click **Try a sample report** to see it work without uploading anything.
+**Live demo:** https://lab-report-explainer.streamlit.app/ · Click **Try a sample report** to see it work without uploading anything.
 
 > ⚠️ This is an educational tool, not medical advice. Always discuss results with a doctor.
 
@@ -30,6 +30,14 @@ Upload a lab report, a scan report (X-ray, CT, MRI, ultrasound), a cancer biopsy
 - **Handles busy servers**: retries busy/overloaded errors twice, then switches to a backup model
 - **Abuse limits**: 10 requests per visitor per hour, 60 per hour for the whole app, 15 pages per PDF, 20 MB per file, 90-second timeout
 - **Nothing stored**: files are processed in memory; results live only in the browser session
+
+## Evaluation
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/srinathgupta/lab-report-explainer/blob/main/eval/Lab_Report_Explainer_Eval.ipynb)
+
+`eval/` measures accuracy on synthetic reports with known answers: it generates fake lab and cancer biopsy reports, runs them through the real app code and Gemini, and compares **AI alone** with **AI + the app's code checks**.
+
+_Results: run the notebook and paste its table here._
 
 ## Setup
 
@@ -68,7 +76,8 @@ medexplain/              The logic, one module per feature:
 summarizer.py            Public entry point that re-exports the medexplain package
 scripts/make_samples.py  Regenerates the synthetic sample PDFs (needs reportlab)
 sample_reports/          Fake lab reports, knee MRI report and breast biopsy report
-tests/                   pytest suite, 158 tests (Gemini is mocked, no key needed)
+eval/                    Accuracy evaluation: synthetic test set, scoring, Colab notebook
+tests/                   pytest suite, 165 tests (Gemini is mocked, no key needed)
 ```
 
 ## How it works
@@ -116,7 +125,7 @@ pytest
 
 ## Ideas for next steps
 
-- An accuracy evaluation on a labelled dataset (e.g. handwritten medicine names) with a published score
+- Evaluate handwritten medicine-name reading on a labelled public dataset
 - Download the summary as a PDF
 - Charts of values over time across 3+ reports
 - Read the summary aloud in the chosen language
