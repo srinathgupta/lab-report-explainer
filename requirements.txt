@@ -1,5 +1,5 @@
 streamlit>=1.40
-google-genai>=1.50
+google-genai>=2.30,<3
 pydantic>=2.7
 python-dotenv>=1.0
 pandas>=2.0
