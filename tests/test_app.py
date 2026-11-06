@@ -30,7 +30,9 @@ def test_loads_without_key_and_warns(monkeypatch):
     at = run(monkeypatch, key=None)
     assert not at.exception
     assert any("No Gemini API key" in e.value for e in at.error)
-    assert all(b.disabled for b in at.button)  # buttons disabled without key/files
+    ai_buttons = [b for b in at.button if not (b.form_id or "").startswith("tracker")]
+    assert ai_buttons and all(b.disabled for b in ai_buttons)  # AI buttons disabled without key/files
+    assert not next(b for b in at.button if b.label == "Save this day").disabled  # tracker needs no key
 
 
 def test_renders_single_summary(monkeypatch):

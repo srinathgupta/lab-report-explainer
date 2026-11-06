@@ -18,3 +18,4 @@ from medexplain.lab import *  # noqa: F401,F403
 from medexplain.oncology import *  # noqa: F401,F403
 from medexplain.prescription import *  # noqa: F401,F403
 from medexplain.scan import *  # noqa: F401,F403
+from medexplain.tracker import *  # noqa: F401,F403

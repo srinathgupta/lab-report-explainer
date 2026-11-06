@@ -12,6 +12,7 @@ Upload a lab report, a scan report (X-ray, CT, MRI, ultrasound), a cancer biopsy
 - **Compare two reports**: side-by-side values, what improved, what needs attention
 - **Scans & other reports**: written X-ray, CT, MRI, ultrasound, ECG, echo and biopsy reports explained: main conclusion, each finding marked normal or needs attention, medical words explained, and what the report recommends
 - **Cancer reports**: biopsy / pathology reports and tumour-marker tests explained calmly: diagnosis as written, stage, TNM and grade, margins, lymph nodes, receptor results (ER, PR, HER2, Ki-67…) and tumour markers (CEA, CA-125, PSA…), with questions for the oncologist
+- **Side-effect tracker**: people in cancer treatment log temperature and symptoms each day (0–4 scale, vomiting and diarrhoea counts, warning-sign checkboxes); the app flags warning signs, shows trend charts and makes a PDF summary for the oncologist. Runs entirely in code, no AI or API key needed, and nothing is stored on a server (the patient downloads and re-loads their log file)
 - **Prescriptions & doctor's notes**: photograph a handwritten note (up to 5 pages); medicines, doses, tests and advice explained, with a confidence rating per item
 - **Follow-up questions**: ask up to 5 questions about any result ("what does joint effusion mean?"). Answers are based on the stored explanation, so the file isn't uploaded again
 - **15 languages**: explanations in the chosen language's script; test names and values stay exactly as printed
@@ -22,6 +23,7 @@ Upload a lab report, a scan report (X-ray, CT, MRI, ultrasound), a cancer biopsy
 - **Code checks the AI**: Python re-checks every high/low/normal flag against the printed reference range and corrects the AI if it got one wrong
 - **Prescription safety**: always uses Accurate mode; unclear medicine names are never guessed (the code removes any interpretation the AI marks as unclear); dose shorthand like `1-0-1`, `BD`, `TDS`, `PC` is explained from a fixed table, not by the AI
 - **Cancer report safety**: stage, TNM, grade, receptor and tumour-marker meanings come from fixed glossaries in code, not the AI; tumour-marker flags are recomputed from the printed range; any sentence about survival, cure chances or life expectancy is removed by code (also in follow-up answers), because outlook is a conversation for the oncologist
+- **Tracker warning rules are fixed code**: e.g. temperature ≥ 38°C → contact the care team now; chest pain or severe breathlessness → call 112 / 108; vomiting 3+ times, 4+ extra loose stools, bleeding, confusion, any very severe symptom → urgent; a symptom moderate or worse 3 days in a row → let the team know. These follow common chemotherapy patient advice and **must be reviewed by a doctor before real use**; the care team's own instructions always take priority
 - **Scan safety**: only the written report is explained. If someone uploads the scan picture itself, the app refuses and the code discards anything the AI said about it
 - **Follow-up safety**: no diagnoses, no medicine advice, off-topic questions declined, and possible emergencies (e.g. chest pain) get a clear "seek help now" message
 - **Prompt-injection resistant**: documents and questions are treated as data; instructions hidden inside them are ignored
@@ -54,18 +56,19 @@ Open http://localhost:8501 and click a **Try a sample…** button, or upload you
 
 ```
 app.py                   Streamlit entry point: sidebar, tabs
-views/                   One screen per tab (lab, scan, oncology, prescription) + shared helpers
+views/                   One screen per tab (lab, scan, oncology, tracker, prescription) + shared helpers
 medexplain/              The logic, one module per feature:
   core.py                  settings, file checks, Gemini call with retries and fallback
   lab.py                   lab reports, comparison, flag double-check
   scan.py                  written scan / test reports
   oncology.py              cancer reports, fixed TNM/grade/marker glossaries, prognosis filter
   prescription.py          prescriptions, dose-code table
+  tracker.py               side-effect log, warning rules, doctor summary PDF (no AI)
   followup.py              follow-up questions
 summarizer.py            Public entry point that re-exports the medexplain package
 scripts/make_samples.py  Regenerates the synthetic sample PDFs (needs reportlab)
 sample_reports/          Fake lab reports, knee MRI report and breast biopsy report
-tests/                   pytest suite, 127 tests (Gemini is mocked, no key needed)
+tests/                   pytest suite, 158 tests (Gemini is mocked, no key needed)
 ```
 
 ## How it works
@@ -113,7 +116,6 @@ pytest
 
 ## Ideas for next steps
 
-- Side-effect tracker for people in cancer treatment, with rule-based warning signs and a summary for the oncologist
 - An accuracy evaluation on a labelled dataset (e.g. handwritten medicine names) with a published score
 - Download the summary as a PDF
 - Charts of values over time across 3+ reports

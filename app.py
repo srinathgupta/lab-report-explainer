@@ -18,6 +18,7 @@ from views.lab import compare_tab, lab_tab
 from views.oncology import onco_tab
 from views.prescription import note_tab
 from views.scan import scan_tab
+from views.tracker import tracker_tab
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -98,8 +99,8 @@ def main() -> None:
     if not has_key:
         st.error("No Gemini API key configured. Add `GEMINI_API_KEY=...` to a `.env` file and restart the app.")
 
-    tab_single, tab_compare, tab_scan, tab_onco, tab_note = st.tabs(
-        ["📄 Lab report", "📈 Compare", "🩻 Scans", "🎗️ Cancer reports", "💊 Prescription"]
+    tab_single, tab_compare, tab_scan, tab_onco, tab_track, tab_note = st.tabs(
+        ["📄 Lab report", "📈 Compare", "🩻 Scans", "🎗️ Cancer reports", "📝 Side effects", "💊 Prescription"]
     )
 
     with tab_single:
@@ -110,6 +111,8 @@ def main() -> None:
         scan_tab(language, mode, has_key)
     with tab_onco:
         onco_tab(language, mode, has_key)
+    with tab_track:
+        tracker_tab(language, mode, has_key)
     with tab_note:
         note_tab(language, mode, has_key)
 
