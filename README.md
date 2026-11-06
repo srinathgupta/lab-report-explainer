@@ -2,7 +2,7 @@
 
 Upload a lab report, a scan report (X-ray, CT, MRI, ultrasound), a cancer biopsy report or a photo of a handwritten prescription, and get a plain-language explanation from Google Gemini, in English, Hindi, Kannada or 12 other languages. Then ask follow-up questions about it.
 
-**Live demo:** _add your Streamlit app link here_. Click **Try a sample report** to see it work without uploading anything.
+   **Live demo:** https://lab-report-explainer.streamlit.app/ · Click **Try a sample report** to see it work without uploading anything.
 
 > ⚠️ This is an educational tool, not medical advice. Always discuss results with a doctor.
 
